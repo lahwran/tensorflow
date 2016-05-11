@@ -47,7 +47,7 @@ from tensorflow.python.ops.gen_functional_ops import _symbolic_gradient
 
 # TODO(yuanbyu, mrry): Handle stride to support sliding windows.
 def foldl(fn, elems, initializer=None, parallel_iterations=10, back_prop=True,
-          swap_memory=False, name=None):
+          swap_memory=False, name=None, pass_index=False):
   """foldl on the list of tensors unpacked from `elems` on dimension 0.
 
   This foldl operator repeatedly applies the callable `fn` to a sequence
@@ -69,6 +69,8 @@ def foldl(fn, elems, initializer=None, parallel_iterations=10, back_prop=True,
     back_prop: (optional) True enables back propagation.
     swap_memory: (optional) True enables GPU-CPU memory swapping.
     name: (optional) Name prefix for the returned tensors.
+    pass_index: (optional) True calls fn(accum, elem, index) instead of
+                fn(accum, elem). Default is False.
 
   Returns:
     A tensor resulting from applying `fn` consecutively to the list of tensors
@@ -109,7 +111,11 @@ def foldl(fn, elems, initializer=None, parallel_iterations=10, back_prop=True,
       i = constant_op.constant(0)
 
     def compute(i, a):
-      a = fn(a, elems_ta.read(i))
+      item = elems_ta.read(i)
+      if pass_index:
+        a = fn(a, item, i)
+      else:
+        a = fn(a, item)
       return [i + 1, a]
     _, r_a = control_flow_ops.while_loop(
         lambda i, a: i < n, compute, [i, a],
@@ -120,7 +126,7 @@ def foldl(fn, elems, initializer=None, parallel_iterations=10, back_prop=True,
 
 
 def foldr(fn, elems, initializer=None, parallel_iterations=10, back_prop=True,
-          swap_memory=False, name=None):
+          swap_memory=False, name=None, pass_index=False):
   """foldr on the list of tensors unpacked from `elems` on dimension 0.
 
   This foldr operator repeatedly applies the callable `fn` to a sequence
@@ -142,6 +148,8 @@ def foldr(fn, elems, initializer=None, parallel_iterations=10, back_prop=True,
     back_prop: (optional) True enables back propagation.
     swap_memory: (optional) True enables GPU-CPU memory swapping.
     name: (optional) Name prefix for the returned tensors.
+    pass_index: (optional) True calls fn(accum, elem, index) instead of
+                fn(accum, elem). Default is False.
 
   Returns:
     A tensor resulting from applying `fn` consecutively to the list of tensors
@@ -179,10 +187,16 @@ def foldr(fn, elems, initializer=None, parallel_iterations=10, back_prop=True,
     else:
       i = n
       a = ops.convert_to_tensor(initializer)
+
     def compute(i, a):
       i -= 1
-      a = fn(a, elems_ta.read(i))
+      item = elems_ta.read(i)
+      if pass_index:
+        a = fn(a, item, i)
+      else:
+        a = fn(a, item)
       return [i, a]
+
     _, r_a = control_flow_ops.while_loop(
         lambda i, a: i > 0, compute, [i, a],
         parallel_iterations=parallel_iterations,
@@ -192,7 +206,7 @@ def foldr(fn, elems, initializer=None, parallel_iterations=10, back_prop=True,
 
 
 def map_fn(fn, elems, dtype=None, parallel_iterations=10, back_prop=True,
-           swap_memory=False, name=None):
+           swap_memory=False, name=None, pass_index=False):
   """map on the list of tensors unpacked from `elems` on dimension 0.
 
   This map operator repeatedly applies the callable `fn` to a sequence of
@@ -212,6 +226,8 @@ def map_fn(fn, elems, dtype=None, parallel_iterations=10, back_prop=True,
     back_prop: (optional) True enables back propagation.
     swap_memory: (optional) True enables GPU-CPU memory swapping.
     name: (optional) Name prefix for the returned tensors.
+    pass_index: (optional) True calls fn(elem, index) instead of fn(elem).
+                Default is False.
 
   Returns:
     A tensor that packs the results of applying `fn` to the list of tensors
@@ -250,13 +266,20 @@ def map_fn(fn, elems, dtype=None, parallel_iterations=10, back_prop=True,
                                           dynamic_size=False,
                                           infer_shape=True)
     def compute(i, ta):
-      ta = ta.write(i, fn(elems_ta.read(i)))
+      item = elems_ta.read(i)
+      if pass_index:
+        result = fn(item, i)
+      else:
+        result = fn(item)
+      ta = ta.write(i, result)
       return [i + 1, ta]
+
     _, r_a = control_flow_ops.while_loop(
         lambda i, a: i < n, compute, [i, acc_ta],
         parallel_iterations=parallel_iterations,
         back_prop=back_prop,
         swap_memory=swap_memory)
+
     result = r_a.pack()
     elems_dims = ops.convert_to_tensor(elems).get_shape().dims
     result_dims = result.get_shape().dims
@@ -266,7 +289,7 @@ def map_fn(fn, elems, dtype=None, parallel_iterations=10, back_prop=True,
 
 
 def scan(fn, elems, initializer=None, parallel_iterations=10, back_prop=True,
-         swap_memory=False, name=None):
+         swap_memory=False, name=None, pass_index=False):
   """scan on the list of tensors unpacked from `elems` on dimension 0.
 
   This scan operator repeatedly applies the callable `fn` to a sequence
@@ -288,6 +311,8 @@ def scan(fn, elems, initializer=None, parallel_iterations=10, back_prop=True,
     back_prop: (optional) True enables back propagation.
     swap_memory: (optional) True enables GPU-CPU memory swapping.
     name: (optional) Name prefix for the returned tensors.
+    pass_index: (optional) True calls fn(accum, elem, index) instead of
+                fn(accum, elem). Default is False.
 
   Returns:
     A tensor that packs the results of applying `fn` to the list of tensors
@@ -334,13 +359,20 @@ def scan(fn, elems, initializer=None, parallel_iterations=10, back_prop=True,
       acc_ta = acc_ta.write(0, a)
 
     def compute(i, a, ta):
-      a = fn(a, elems_ta.read(i))
+      item = elems_ta.read(i)
+      if pass_index:
+        a = fn(a, item, i)
+      else:
+        a = fn(a, item)
+
       ta = ta.write(i, a)
       return [i + 1, a, ta]
+
     _, _, r_a = control_flow_ops.while_loop(
         lambda i, a, ta: i < n, compute, [i, a, acc_ta],
         parallel_iterations=parallel_iterations,
         back_prop=back_prop, swap_memory=swap_memory)
+
     result = r_a.pack()
     elems_dims = ops.convert_to_tensor(elems).get_shape().dims
     result_dims = result.get_shape().dims
